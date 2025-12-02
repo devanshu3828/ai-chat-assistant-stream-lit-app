@@ -17,6 +17,13 @@ from app.ui.components import render_credentials_setup, render_sidebar
 from app.services.streaming import stream_agent_response, extract_assistant_message
 
 
+def render_message_with_s3(text, region, unique_id=""):
+    """Render message with S3 links replaced by clickable download buttons."""
+    from app.services.s3_handler import render_message_with_s3_links
+    
+    render_message_with_s3_links(text, region, unique_id)
+
+
 def main():
     """Main application entry point."""
     # Initialize session state
@@ -38,9 +45,13 @@ def main():
     render_sidebar()
     
     # Display chat history
+    region = st.session_state.get("region", DEFAULT_REGION)
     for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                render_message_with_s3(message["content"], region, unique_id=f"msg_{idx}")
+            else:
+                st.markdown(message["content"])
 
     # Chat input
     if prompt := st.chat_input("Type your message..."):
@@ -74,17 +85,16 @@ def main():
                         region
                     )
                     
-                    # Create a wrapper generator that clears "Thinking..." on first chunk
-                    def clear_thinking_and_stream():
-                        first_chunk = True
-                        for chunk in response_generator:
-                            if first_chunk:
-                                message_placeholder.empty()
-                                first_chunk = False
-                            yield chunk
+                    # Collect the streamed message
+                    for chunk in response_generator:
+                        assistant_message += chunk
+                        # Show streaming text
+                        message_placeholder.markdown(assistant_message + "▌")
                     
-                    # Display streaming response using st.write_stream
-                    assistant_message = st.write_stream(clear_thinking_and_stream())
+                    # Clear streaming cursor and render final message with S3 links
+                    message_placeholder.empty()
+                    if assistant_message:
+                        render_message_with_s3(assistant_message, region, unique_id="streaming")
                     
                 except Exception as stream_error:
                     # Fallback to non-streaming if streaming fails
@@ -111,7 +121,9 @@ def main():
                     # Extract the assistant message
                     assistant_message = extract_assistant_message(response_data)
                     
-                    message_placeholder.markdown(assistant_message)
+                    # Render message with S3 download handling
+                    message_placeholder.empty()
+                    render_message_with_s3(assistant_message, region, unique_id="fallback")
                 
                 # Add to chat history
                 if assistant_message:
